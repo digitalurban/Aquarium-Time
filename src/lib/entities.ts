@@ -33,8 +33,8 @@ export class VectorFish {
     if (this.species === 'clownfish') {
       this.y = height - 150 - Math.random() * 150; // Clownfish prefer bottom
       this.size = 1.0 + Math.random() * 0.3;
-      this.baseSpeed = 1.2 + Math.random() * 0.8;
-      this.maxForce = 0.10 + Math.random() * 0.08;
+      this.baseSpeed = 0.6 + Math.random() * 0.5;
+      this.maxForce = 0.06 + Math.random() * 0.04;
     } else {
       this.y = Math.random() * (height - 200) + 100; // Tetras everywhere
       this.size = 0.8 + Math.random() * 0.3;
@@ -112,8 +112,8 @@ export class VectorFish {
       let aliX = 0, aliY = 0, aliCount = 0;
       let cohX = 0, cohY = 0, cohCount = 0;
 
-      const perceptionRadius = this.species === 'tetra' ? 150 : 200;
-      const separationRadius = (this.species === 'tetra' ? 30 : 100) * this.size;
+      const perceptionRadius = this.species === 'tetra' ? 150 : 80;
+      const separationRadius = (this.species === 'tetra' ? 30 : 60) * this.size;
 
       for (const other of fishes) {
         if (other === this) continue;
@@ -138,7 +138,7 @@ export class VectorFish {
       }
 
       if (sepCount > 0) {
-        const sepMult = this.species === 'tetra' ? 2.5 : 3.5;
+        const sepMult = this.species === 'tetra' ? 2.5 : 1.5;
         ax += (sepX / sepCount) * this.maxForce * sepMult;
         ay += (sepY / sepCount) * this.maxForce * sepMult;
       }
@@ -148,7 +148,7 @@ export class VectorFish {
         aliY /= aliCount;
         const speed = Math.sqrt(aliX * aliX + aliY * aliY);
         if (speed > 0) {
-          const aliMult = this.species === 'tetra' ? 1.2 : 1.4;
+          const aliMult = this.species === 'tetra' ? 1.2 : 0.1; // Clownfish barely align
           ax += ((aliX / speed) * this.maxSpeed - this.vx) * this.maxForce * aliMult;
           ay += ((aliY / speed) * this.maxSpeed - this.vy) * this.maxForce * aliMult;
         }
@@ -159,17 +159,30 @@ export class VectorFish {
         const dy = cohY - this.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         if (dist > 0) {
-          const cohMult = this.species === 'tetra' ? 0.8 : 1.1;
+          const cohMult = this.species === 'tetra' ? 0.8 : 0.2; // Clownfish loosely stay near each other
           ax += ((dx / dist) * this.maxSpeed - this.vx) * this.maxForce * cohMult;
           ay += ((dy / dist) * this.maxSpeed - this.vy) * this.maxForce * cohMult;
         }
       }
 
       // 3. Wander
-      const time = Date.now() / 1000 + this.idOffset;
-      const wanderMult = this.species === 'tetra' ? 0.8 : 1.8;
-      ax += Math.cos(time * 0.5) * this.maxForce * wanderMult;
-      ay += Math.sin(time * 0.6) * this.maxForce * wanderMult;
+      const time = Date.now() / 1000;
+      if (this.species === 'clownfish') {
+        // Clownfish have a more erratic, darting wander that is less continuous
+        // Use different frequencies to avoid perfect mirroring
+        ax += Math.cos(time * 0.8 + this.idOffset) * this.maxForce * 1.2;
+        ay += Math.sin(time * 1.1 + this.idOffset * 1.5) * this.maxForce * 0.9;
+        
+        // Occasional darting
+        if (Math.sin(time * 0.5 + this.idOffset) > 0.8) {
+          ax += Math.cos(time * 2.0 + this.idOffset) * this.maxForce * 2.5;
+          ay += Math.sin(time * 2.3 + this.idOffset) * this.maxForce * 1.5;
+        }
+      } else {
+        const wanderMult = 0.8;
+        ax += Math.cos(time * 0.5 + this.idOffset) * this.maxForce * wanderMult;
+        ay += Math.sin(time * 0.6 + this.idOffset) * this.maxForce * wanderMult;
+      }
       
       // Tap evasion
       for (const tap of taps) {
@@ -215,14 +228,17 @@ export class VectorFish {
       
       // Clownfish prefer bottom
       if (this.species === 'clownfish') {
-        const targetY = height - 100;
-        ay += (targetY - this.y) * 0.0002;
+        const targetY = height - 150;
+        ay += (targetY - this.y) * 0.0003;
       }
 
       // 4. Hardscape Interactions
-      for (const item of environment) {
-        if (item instanceof Pebble) continue;
-        
+      const hardscapes = environment.filter((item): item is Rock | Driftwood => !(item instanceof Pebble));
+      const myHost = this.species === 'clownfish' && hardscapes.length > 0 
+        ? hardscapes[Math.floor(this.idOffset) % hardscapes.length] 
+        : null;
+
+      for (const item of hardscapes) {
         const dx = this.x - item.x;
         const dy = this.y - item.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
@@ -238,13 +254,19 @@ export class VectorFish {
         }
 
         // Clownfish Territory Attraction
-        if (this.species === 'clownfish') {
-          const territoryRadius = 300;
-          if (dist < territoryRadius) {
-            // Gentle pull towards the hardscape
-            const pull = (1 - dist / territoryRadius) * 0.0005;
+        if (this.species === 'clownfish' && item === myHost) {
+          const territoryRadius = 350;
+          const comfortableRadius = item instanceof Rock ? item.width * 1.5 : item.width * 1.0;
+          
+          if (dist < territoryRadius && dist > comfortableRadius) {
+            // Gentle pull towards the hardscape if outside comfortable radius
+            const pull = (1 - dist / territoryRadius) * 0.0004;
             ax -= dx * pull;
             ay -= dy * pull;
+          } else if (dist <= comfortableRadius) {
+            // Inside comfortable radius, hover and chill
+            this.vx *= 0.95;
+            this.vy *= 0.95;
           }
         }
       }
@@ -283,15 +305,16 @@ export class VectorFish {
         this.vy = (this.vy / speed) * this.maxSpeed * 4;
       }
     } else {
+      const minSpeed = this.species === 'clownfish' ? this.maxSpeed * 0.05 : this.maxSpeed * 0.3;
       if (speed > this.maxSpeed) {
         this.vx = (this.vx / speed) * this.maxSpeed;
         this.vy = (this.vy / speed) * this.maxSpeed;
-      } else if (speed < this.maxSpeed * 0.3) {
+      } else if (speed < minSpeed) {
         if (speed > 0) {
-          this.vx = (this.vx / speed) * (this.maxSpeed * 0.3);
-          this.vy = (this.vy / speed) * (this.maxSpeed * 0.3);
+          this.vx = (this.vx / speed) * minSpeed;
+          this.vy = (this.vy / speed) * minSpeed;
         } else {
-          this.vx = this.maxSpeed * 0.3;
+          this.vx = minSpeed;
           this.vy = 0;
         }
       }
@@ -313,7 +336,13 @@ export class VectorFish {
     } else {
       const targetAngle = Math.atan2(this.vy, this.vx);
       let diff = normalizeAngle(targetAngle - this.angle);
-      this.angle += diff * 0.1;
+      
+      // If moving very slowly, don't turn as much to avoid jitter/spinning
+      const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+      if (speed > 0.2) {
+        const turnSpeed = speed < 0.5 ? 0.05 : 0.1;
+        this.angle += diff * turnSpeed;
+      }
     }
   }
 
@@ -1033,6 +1062,190 @@ export class Plant {
         this.drawElodeaBranch(ctx, midX, midY, length * 0.6, branchAngle, depth - 1, time, flowMag, swayPhase, seedState);
       }
     }
+  }
+}
+
+export class Crab {
+  x: number;
+  y: number;
+  z: number;
+  width: number;
+  height: number;
+  vx: number;
+  state: 'hidden' | 'walking' | 'pausing';
+  legPhase: number;
+  facingRight: boolean;
+  pauseTimer: number;
+  lastSpawnHour: number;
+
+  constructor(width: number, height: number) {
+    this.width = width + 800; // Virtual width
+    this.height = height;
+    this.state = 'hidden';
+    this.x = -100;
+    this.y = height - 12;
+    this.z = 80; // Close to front
+    this.vx = 0;
+    this.legPhase = 0;
+    this.facingRight = true;
+    this.pauseTimer = 0;
+    this.lastSpawnHour = -1;
+  }
+
+  update(width: number, height: number) {
+    this.width = width + 800;
+    this.height = height;
+    this.y = height - 12;
+
+    if (this.state === 'hidden') {
+      const now = new Date();
+      // Spawn exactly on the hour (when minutes === 0)
+      if (now.getMinutes() === 0 && this.lastSpawnHour !== now.getHours()) {
+        this.state = 'walking';
+        this.lastSpawnHour = now.getHours();
+        this.facingRight = Math.random() > 0.5;
+        this.x = this.facingRight ? -50 : this.width + 50;
+        this.vx = this.facingRight ? 0.8 : -0.8;
+        this.z = 70 + Math.random() * 20; // Near front
+      }
+    } else if (this.state === 'walking') {
+      this.x += this.vx;
+      this.legPhase += 0.2;
+
+      // Randomly pause
+      if (Math.random() < 0.005) {
+        this.state = 'pausing';
+        this.pauseTimer = 60 + Math.random() * 120; // Pause for 1-3 seconds
+      }
+
+      // Check if off-screen
+      if ((this.facingRight && this.x > this.width + 50) || (!this.facingRight && this.x < -50)) {
+        this.state = 'hidden';
+      }
+    } else if (this.state === 'pausing') {
+      this.pauseTimer--;
+      if (this.pauseTimer <= 0) {
+        this.state = 'walking';
+      }
+    }
+  }
+
+  draw(ctx: CanvasRenderingContext2D) {
+    if (this.state === 'hidden') return;
+
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    
+    // Scale based on z-depth (similar to other entities)
+    const scale = 0.5 + (this.z / 100) * 0.5;
+    ctx.scale(scale, scale);
+
+    if (!this.facingRight) {
+      ctx.scale(-1, 1);
+    }
+
+    // Draw Crab
+    const crabColor = '#e74c3c';
+    const darkCrabColor = '#c0392b';
+
+    // Legs
+    ctx.strokeStyle = darkCrabColor;
+    ctx.lineWidth = 2;
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    
+    const walkOffset = this.state === 'walking' ? Math.sin(this.legPhase) : 0;
+    
+    // Back legs
+    for (let i = 0; i < 3; i++) {
+      const angleOffset = (i - 1) * 0.4;
+      const legSwing = walkOffset * (i % 2 === 0 ? 1 : -1) * 0.5;
+      
+      ctx.beginPath();
+      // Right legs
+      ctx.moveTo(5, 2);
+      ctx.lineTo(12 + Math.cos(angleOffset + legSwing) * 8, 8 + Math.sin(angleOffset + legSwing) * 8);
+      ctx.lineTo(15 + Math.cos(angleOffset + legSwing) * 12, 15);
+      ctx.stroke();
+
+      ctx.beginPath();
+      // Left legs
+      ctx.moveTo(-5, 2);
+      ctx.lineTo(-12 - Math.cos(angleOffset - legSwing) * 8, 8 + Math.sin(angleOffset - legSwing) * 8);
+      ctx.lineTo(-15 - Math.cos(angleOffset - legSwing) * 12, 15);
+      ctx.stroke();
+    }
+
+    // Claws (raised up)
+    const clawSwing = this.state === 'walking' ? Math.sin(this.legPhase * 0.5) * 0.2 : 0;
+    
+    // Right claw
+    ctx.save();
+    ctx.translate(10, -2);
+    ctx.rotate(0.5 + clawSwing);
+    ctx.fillStyle = crabColor;
+    ctx.beginPath();
+    ctx.ellipse(8, -8, 6, 4, Math.PI / 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Pincer
+    ctx.beginPath();
+    ctx.moveTo(12, -10);
+    ctx.lineTo(18, -15);
+    ctx.lineTo(14, -6);
+    ctx.stroke();
+    ctx.restore();
+
+    // Left claw
+    ctx.save();
+    ctx.translate(-10, -2);
+    ctx.rotate(-0.5 - clawSwing);
+    ctx.fillStyle = crabColor;
+    ctx.beginPath();
+    ctx.ellipse(-8, -8, 6, 4, -Math.PI / 4, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    // Pincer
+    ctx.beginPath();
+    ctx.moveTo(-12, -10);
+    ctx.lineTo(-18, -15);
+    ctx.lineTo(-14, -6);
+    ctx.stroke();
+    ctx.restore();
+
+    // Body
+    ctx.fillStyle = crabColor;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 14, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = darkCrabColor;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Eyes (stalks)
+    ctx.strokeStyle = crabColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-4, -6);
+    ctx.lineTo(-6, -12);
+    ctx.moveTo(4, -6);
+    ctx.lineTo(6, -12);
+    ctx.stroke();
+
+    // Eye balls
+    ctx.fillStyle = 'white';
+    ctx.beginPath();
+    ctx.arc(-6, -13, 2.5, 0, Math.PI * 2);
+    ctx.arc(6, -13, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = 'black';
+    ctx.beginPath();
+    ctx.arc(-6, -13.5, 1, 0, Math.PI * 2);
+    ctx.arc(6, -13.5, 1, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
   }
 }
 

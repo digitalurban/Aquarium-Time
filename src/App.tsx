@@ -80,7 +80,12 @@ export default function App() {
       return saved !== null ? parseInt(saved, 10) : 50;
     } catch { return 50; }
   });
-  const [lightZoom, setLightZoom] = useState(0.1);
+  const [waterLightness, setWaterLightness] = useState(() => {
+    try {
+      const saved = localStorage.getItem('aquarium_waterLightness');
+      return saved !== null ? parseInt(saved, 10) : 50;
+    } catch { return 50; }
+  });
   const [showOptions, setShowOptions] = useState(false);
   const [showTime, setShowTime] = useState(() => {
     try {
@@ -100,6 +105,7 @@ export default function App() {
     } catch { return null; }
   });
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const touchStartDistRef = useRef<number | null>(null);
 
   useUnderwaterSound(soundEnabled, customAudioUrl);
 
@@ -149,8 +155,11 @@ export default function App() {
   }, [flow]);
 
   useEffect(() => {
-    aquariumRef.current?.setLightZoom(lightZoom);
-  }, [lightZoom]);
+    aquariumRef.current?.setWaterLightness(waterLightness);
+    try {
+      localStorage.setItem('aquarium_waterLightness', waterLightness.toString());
+    } catch {}
+  }, [waterLightness]);
 
   useEffect(() => {
     aquariumRef.current?.setShowTime(showTime);
@@ -160,7 +169,38 @@ export default function App() {
   }, [showTime]);
 
   const handleWheel = (e: React.WheelEvent) => {
-    setLightZoom(prev => Math.max(0.1, Math.min(3.0, prev - e.deltaY * 0.001)));
+    setWaterLightness(prev => Math.max(0, Math.min(100, prev - e.deltaY * 0.1)));
+  };
+
+  const getPinchDistance = (e: React.TouchEvent) => {
+    if (e.touches.length < 2) return null;
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (e.touches.length === 2) {
+      touchStartDistRef.current = getPinchDistance(e);
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (e.touches.length === 2 && touchStartDistRef.current !== null) {
+      const currentDist = getPinchDistance(e);
+      if (currentDist !== null) {
+        const delta = currentDist - touchStartDistRef.current;
+        // Adjust sensitivity as needed
+        setWaterLightness(prev => Math.max(0, Math.min(100, prev + delta * 0.5)));
+        touchStartDistRef.current = currentDist;
+      }
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    if (e.touches.length < 2) {
+      touchStartDistRef.current = null;
+    }
   };
 
   const handleFeed = () => {
@@ -193,8 +233,11 @@ export default function App() {
 
   return (
     <div 
-      className="relative w-full h-screen overflow-hidden bg-black font-sans selection:bg-blue-500/30"
+      className="fixed inset-0 overflow-hidden bg-black font-sans selection:bg-blue-500/30"
       onWheel={handleWheel}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
     >
       {/* Aquarium Canvas */}
       <div className="absolute inset-0">
@@ -202,7 +245,7 @@ export default function App() {
       </div>
 
       {/* UI Overlay */}
-      <div className="absolute top-0 left-0 w-full p-4 pointer-events-none flex flex-col justify-end h-full pb-[max(1rem,env(safe-area-inset-bottom))] pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))]">
+      <div className="absolute inset-0 p-4 pointer-events-none flex flex-col justify-end pb-[max(1rem,env(safe-area-inset-bottom))] pr-[max(1rem,env(safe-area-inset-right))] pl-[max(1rem,env(safe-area-inset-left))]">
         
         {/* Bottom Right Controls */}
         <div className="pointer-events-auto flex flex-col items-end gap-3 self-end mb-4">
@@ -273,20 +316,6 @@ export default function App() {
               className="bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 border border-slate-600/50 px-4 py-1.5 rounded-full text-sm transition-all active:scale-95"
             >
               + Air
-            </button>
-
-            <button 
-              onClick={() => handleRemoveFish('tetra')}
-              className="bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 border border-slate-600/50 px-4 py-1.5 rounded-full text-sm transition-all active:scale-95"
-            >
-              - Tetra
-            </button>
-
-            <button 
-              onClick={() => handleAddFish('tetra')}
-              className="bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 border border-slate-600/50 px-4 py-1.5 rounded-full text-sm transition-all active:scale-95"
-            >
-              + Tetra
             </button>
 
             <button 

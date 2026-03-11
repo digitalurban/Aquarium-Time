@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
-import { VectorFish, Bubble, Food, Pebble, Rock, Driftwood, Plant, GhostShrimp, SideFilter, Snail } from '../lib/entities';
+import { VectorFish, Bubble, Food, Pebble, Rock, Driftwood, Plant, GhostShrimp, SideFilter, Snail, Crab } from '../lib/entities';
 
 export interface AquariumRef {
   addFish: (species: 'tetra' | 'clownfish') => void;
@@ -7,7 +7,7 @@ export interface AquariumRef {
   feed: (x?: number, y?: number) => void;
   setFlow: (flow: number) => void;
   setAirPump: (level: number) => void;
-  setLightZoom: (zoom: number) => void;
+  setWaterLightness: (lightness: number) => void;
   setShowTime: (show: boolean) => void;
 }
 
@@ -17,7 +17,7 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
   const stateRef = useRef({
     flow: 50,
     airPump: 50,
-    lightZoom: 0.1,
+    waterLightness: 50,
     isDraggingFilter: false,
     dragOffsetY: 0,
     dragPointerId: -1,
@@ -34,6 +34,7 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
     bubbles: [] as Bubble[],
     shrimps: [] as GhostShrimp[],
     snails: [] as Snail[],
+    crabs: [] as Crab[],
     environment: [] as (Pebble | Rock | Driftwood)[],
     plants: [] as Plant[],
     taps: [] as {x: number, y: number, age: number, maxAge: number}[],
@@ -76,7 +77,7 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
     },
     setFlow: (flow: number) => { stateRef.current.flow = flow; },
     setAirPump: (level: number) => { stateRef.current.airPump = level; },
-    setLightZoom: (zoom: number) => { stateRef.current.lightZoom = zoom; },
+    setWaterLightness: (lightness: number) => { stateRef.current.waterLightness = lightness; },
     setShowTime: (show: boolean) => { stateRef.current.showTime = show; },
   }));
 
@@ -113,14 +114,17 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
         // Use devicePixelRatio up to 2 for crispness on Retina displays without tanking performance
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         
-        canvas.width = parent.clientWidth * dpr;
-        canvas.height = parent.clientHeight * dpr;
-        ctx.scale(dpr, dpr);
-        canvas.style.width = `${parent.clientWidth}px`;
-        canvas.style.height = `${parent.clientHeight}px`;
+        const width = window.innerWidth;
+        const height = window.innerHeight;
         
-        sim.width = parent.clientWidth;
-        sim.height = parent.clientHeight;
+        canvas.width = width * dpr;
+        canvas.height = height * dpr;
+        ctx.scale(dpr, dpr);
+        canvas.style.width = `${width}px`;
+        canvas.style.height = `${height}px`;
+        
+        sim.width = width;
+        sim.height = height;
         
         const oldY = sim.sideFilter?.y;
         sim.sideFilter = new SideFilter(sim.width, sim.height);
@@ -128,13 +132,8 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
           sim.sideFilter.y = Math.max(0, Math.min(sim.height - sim.sideFilter.height, oldY));
         }
         
-        // Cache background gradient
-        const grad = ctx.createLinearGradient(0, 0, 0, sim.height);
-        grad.addColorStop(0, '#0099dd'); // Brighter ocean blue surface
-        grad.addColorStop(0.5, '#0066aa'); // Vibrant mid water
-        grad.addColorStop(1, '#004477'); // Lighter deep water
-        sim.bgGradient = grad;
-
+        // Background gradient is now drawn dynamically in drawBackground
+        
         generateEnvironment();
         
         // Cache static environment (pebbles, rocks, driftwood) to layered offscreen canvases for parallax
@@ -171,7 +170,21 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
       }
     };
     
-    window.addEventListener('resize', resize);
+    let resizeTimeout: ReturnType<typeof setTimeout>;
+    const resizeObserver = new ResizeObserver(() => {
+      clearTimeout(resizeTimeout);
+      resizeTimeout = setTimeout(resize, 50);
+    });
+    if (canvas.parentElement) {
+      resizeObserver.observe(canvas.parentElement);
+    }
+    
+    const handleOrientationChange = () => {
+      setTimeout(resize, 100);
+      setTimeout(resize, 300);
+    };
+    window.addEventListener('orientationchange', handleOrientationChange);
+    
     resize();
 
     // Clear existing to prevent duplicates in React Strict Mode
@@ -180,6 +193,7 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
     sim.bubbles = [];
     sim.shrimps = [];
     sim.snails = [];
+    sim.crabs = [];
 
     // Load saved fish counts or use defaults
     const savedTetras = localStorage.getItem('aquarium_tetras');
@@ -192,40 +206,26 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
     for (let i = 0; i < numClowns; i++) sim.fishes.push(new VectorFish(sim.width, sim.height, 'clownfish'));
     for (let i = 0; i < 2; i++) sim.shrimps.push(new GhostShrimp(sim.width, sim.height));
     for (let i = 0; i < 3; i++) sim.snails.push(new Snail(sim.width, sim.height));
+    sim.crabs.push(new Crab(sim.width, sim.height));
 
     let animationId: number;
 
     const drawBackground = () => {
       const time = Date.now() / 1000;
-      const { lightZoom, cameraX } = stateRef.current;
+      const { waterLightness, cameraX } = stateRef.current;
       const virtualWidth = sim.width + 800;
 
       // Realistic Blue Deep water gradient (fixed to screen)
-      if (sim.bgGradient) {
-        ctx.fillStyle = sim.bgGradient;
-        ctx.fillRect(0, 0, sim.width, sim.height);
-      }
+      const lOffset = (waterLightness - 50) * 0.8;
+      const grad = ctx.createLinearGradient(0, 0, 0, sim.height);
+      grad.addColorStop(0, `hsl(200, 100%, ${Math.max(0, Math.min(100, 43 + lOffset))}%)`);
+      grad.addColorStop(0.5, `hsl(204, 100%, ${Math.max(0, Math.min(100, 33 + lOffset))}%)`);
+      grad.addColorStop(1, `hsl(206, 100%, ${Math.max(0, Math.min(100, 23 + lOffset))}%)`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, sim.width, sim.height);
 
       ctx.save();
       ctx.translate(-cameraX, 0);
-
-      // Light rays
-      // Use default composite operation (source-over) for best performance on Safari
-      const numRays = virtualWidth < 800 ? 3 : 5;
-      const raySpread = 200 * lightZoom;
-      
-      for (let i = 0; i < numRays; i++) {
-        const x = (virtualWidth / numRays) * i + Math.sin(time * 0.5 + i) * 50;
-        
-        // Use simple fill instead of gradient for rays to save performance
-        ctx.fillStyle = `rgba(200, 235, 255, ${0.05 * lightZoom})`;
-        ctx.beginPath();
-        ctx.moveTo(x - raySpread/2, 0);
-        ctx.lineTo(x + raySpread/2, 0);
-        ctx.lineTo(x + raySpread, sim.height);
-        ctx.lineTo(x - raySpread, sim.height);
-        ctx.fill();
-      }
 
       // Water surface
       ctx.fillStyle = 'rgba(220, 245, 255, 0.08)';
@@ -397,11 +397,12 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
         f.draw(ctx);
       });
 
-      // Parallax Entities (Plants, Fishes, and Shrimps sorted by Z)
-      const parallaxEntities: { type: 'plant' | 'fish' | 'shrimp', z: number, obj: any }[] = [
+      // Parallax Entities (Plants, Fishes, Shrimps, and Crabs sorted by Z)
+      const parallaxEntities: { type: 'plant' | 'fish' | 'shrimp' | 'crab', z: number, obj: any }[] = [
         ...(sim.plants || []).map(p => ({ type: 'plant' as const, z: p.z, obj: p })),
         ...sim.fishes.map(f => ({ type: 'fish' as const, z: f.z, obj: f })),
-        ...sim.shrimps.map(s => ({ type: 'shrimp' as const, z: s.z, obj: s }))
+        ...sim.shrimps.map(s => ({ type: 'shrimp' as const, z: s.z, obj: s })),
+        ...sim.crabs.map(c => ({ type: 'crab' as const, z: c.z, obj: c }))
       ];
 
       parallaxEntities.sort((a, b) => a.z - b.z);
@@ -410,7 +411,9 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
       const drawEnvLayer = (layer: number) => {
         if (sim.envCanvases[layer]) {
           ctx.save();
-          ctx.setTransform(1, 0, 0, 1, -cameraX, 0);
+          // Use the actual device pixel ratio to translate correctly
+          const dpr = Math.min(window.devicePixelRatio || 1, 2);
+          ctx.setTransform(1, 0, 0, 1, -cameraX * dpr, 0);
           ctx.drawImage(sim.envCanvases[layer], 0, 0);
           ctx.restore();
         }
@@ -441,6 +444,12 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
           if (s.x > cameraX - 100 && s.x < cameraX + sim.width + 100) {
             s.draw(ctx);
           }
+        } else if (entity.type === 'crab') {
+          const c = entity.obj as Crab;
+          c.update(sim.width, sim.height);
+          if (c.x > cameraX - 100 && c.x < cameraX + sim.width + 100) {
+            c.draw(ctx);
+          }
         }
       });
 
@@ -464,7 +473,9 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
     loop();
 
     return () => {
-      window.removeEventListener('resize', resize);
+      clearTimeout(resizeTimeout);
+      resizeObserver.disconnect();
+      window.removeEventListener('orientationchange', handleOrientationChange);
       cancelAnimationFrame(animationId);
     };
   }, []);
