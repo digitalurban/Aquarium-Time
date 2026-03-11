@@ -1,5 +1,5 @@
 {
-  "name": "AquairumTime",
-  "description": "A web based aquarium with schooling fish, shrimps and snails. It includes the option to allow the fish to show the time every minute",
+  "name": "AquaClock",
+  "description": " The Living Aquarium Clock - A web based aquarium with schooling fish, shrimps and snails. It includes the option to allow the fish to show the time every minute",
   "requestFramePermissions": []
 }

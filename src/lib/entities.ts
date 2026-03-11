@@ -52,6 +52,7 @@ export class VectorFish {
   update(width: number, height: number, fishes: VectorFish[], foods: Food[], flow: number, environment: (Pebble | Rock | Driftwood)[], sideFilter: SideFilter | null, taps: {x: number, y: number, age: number, maxAge: number}[]) {
     let ax = 0;
     let ay = 0;
+    let nearestFood: Food | null = null;
 
     // Adjust max speed based on flow (50 is neutral, 0 is slow, 100 is fast)
     const flowMultiplier = 0.5 + (flow / 100); // 0.5x to 1.5x speed
@@ -77,30 +78,35 @@ export class VectorFish {
       this.vy *= 0.90;
     } else {
       // 1. Seek Food
-      let nearestFood: Food | null = null;
       let minDist = 300;
-    for (const food of foods) {
-      if (food.eaten) continue;
-      const dx = food.x - this.x;
-      const dy = food.y - this.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < minDist) {
-        minDist = dist;
-        nearestFood = food;
+      for (const food of foods) {
+        if (food.eaten) continue;
+        const dx = food.x - this.x;
+        const dy = food.y - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < minDist) {
+          minDist = dist;
+          nearestFood = food;
+        }
       }
-    }
 
-    if (nearestFood) {
-      const dx = nearestFood.x - this.x;
-      const dy = nearestFood.y - this.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < 15 * this.size) {
-        nearestFood.eaten = true;
+      if (nearestFood) {
+        const dx = nearestFood.x - this.x;
+        const dy = nearestFood.y - this.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 25 * this.size) {
+          nearestFood.eaten = true;
+        } else {
+          // Slow down as we get closer to avoid orbiting
+          const forceScale = dist < 100 ? Math.max(0.2, dist / 100) : 1;
+          ax += (dx / dist) * this.maxForce * 4.0 * forceScale;
+          ay += (dy / dist) * this.maxForce * 4.0 * forceScale;
+          
+          // Add a damping force to reduce perpendicular velocity (orbiting)
+          this.vx *= 0.95;
+          this.vy *= 0.95;
+        }
       } else {
-        ax += (dx / dist) * this.maxForce * 2.5;
-        ay += (dy / dist) * this.maxForce * 2.5;
-      }
-    } else {
       // 2. Flocking (Tetras flock strongly, Clownfish weakly)
       let sepX = 0, sepY = 0, sepCount = 0;
       let aliX = 0, aliY = 0, aliCount = 0;
@@ -254,7 +260,9 @@ export class VectorFish {
     if (this.x > wallVirtualWidth - marginX) ax -= turnFactor * (this.x - (wallVirtualWidth - marginX)) / marginX;
     
     if (this.y < marginY) ay += turnFactor * (marginY - this.y) / marginY;
-    if (this.y > height - marginY - 50) ay -= turnFactor * (this.y - (height - marginY - 50)) / marginY;
+    
+    const bottomMargin = nearestFood ? 15 : marginY + 50;
+    if (this.y > height - bottomMargin) ay -= turnFactor * (this.y - (height - bottomMargin)) / marginY;
 
     // 5. Flow effect (Horizontal push from left to right)
     const flowMag = flow / 100;
@@ -1560,6 +1568,167 @@ export class SideFilter {
       ctx.restore();
     }
     
+    ctx.restore();
+  }
+}
+
+export class Snail {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  angle: number;
+  falling: boolean;
+  hiding: boolean;
+  hideTimer: number;
+  size: number;
+  color: string;
+  shellColor: string;
+  wobblePhase: number;
+
+  constructor(width: number, height: number) {
+    this.x = Math.random() * width;
+    this.y = Math.random() * height;
+    this.vx = (Math.random() - 0.5) * 0.05;
+    this.vy = (Math.random() - 0.5) * 0.05;
+    this.angle = Math.atan2(this.vy, this.vx);
+    this.falling = false;
+    this.hiding = false;
+    this.hideTimer = 0;
+    this.size = 6 + Math.random() * 3;
+    this.color = '#a39171';
+    this.shellColor = '#5c4033';
+    this.wobblePhase = Math.random() * Math.PI * 2;
+  }
+
+  update(width: number, height: number, taps: {x: number, y: number, age: number, maxAge: number}[], cameraX: number) {
+    if (this.falling) {
+      this.vy += 0.05; // gravity
+      this.y += this.vy;
+      this.x += this.vx;
+      
+      if (this.y >= height - 15) {
+        this.y = height - 15;
+        this.falling = false;
+        this.hiding = true; // hide when hitting the ground
+        this.hideTimer = 100 + Math.random() * 100;
+        this.vx = 0;
+        this.vy = 0;
+      }
+    } else {
+      // Check for taps
+      for (const tap of taps) {
+        if (tap.age <= 2) { // Only react when tap is fresh
+          const screenTapX = tap.x - cameraX;
+          const dx = this.x - screenTapX;
+          const dy = this.y - tap.y;
+          const distSq = dx * dx + dy * dy;
+          if (distSq < 10000) { // 100px radius
+            this.falling = true;
+            this.hiding = true; // hide when tapped
+            this.vy = 0;
+            this.vx = (Math.random() - 0.5) * 1;
+            break;
+          }
+        }
+      }
+
+      if (!this.falling) {
+        if (this.hiding) {
+          this.hideTimer--;
+          if (this.hideTimer <= 0) {
+            this.hiding = false;
+            this.vx = (Math.random() - 0.5) * 0.05;
+            this.vy = (Math.random() - 0.5) * 0.05;
+          }
+        } else {
+          // Randomly decide to hide
+          if (Math.random() < 0.002) {
+            this.hiding = true;
+            this.hideTimer = 200 + Math.random() * 300; // Hide for 200-500 frames
+            this.vx = 0;
+            this.vy = 0;
+          } else {
+            // Slow wandering
+            if (Math.random() < 0.01) {
+              this.vx += (Math.random() - 0.5) * 0.02;
+              this.vy += (Math.random() - 0.5) * 0.02;
+            }
+
+            // Normalize speed
+            const speed = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
+            if (speed > 0.05) {
+              this.vx = (this.vx / speed) * 0.05;
+              this.vy = (this.vy / speed) * 0.05;
+            }
+
+            this.x += this.vx;
+            this.y += this.vy;
+            
+            if (speed > 0.01) {
+              this.angle = Math.atan2(this.vy, this.vx);
+            }
+
+            // Keep on glass
+            if (this.x < 0) { this.x = 0; this.vx *= -1; }
+            if (this.x > width) { this.x = width; this.vx *= -1; }
+            if (this.y < 0) { this.y = 0; this.vy *= -1; }
+            if (this.y > height) { this.y = height; this.vy *= -1; }
+          }
+        }
+      }
+    }
+  }
+
+  draw(ctx: CanvasRenderingContext2D) {
+    ctx.save();
+    ctx.translate(this.x, this.y);
+    
+    if (!this.falling) {
+      ctx.rotate(this.angle);
+    } else {
+      ctx.rotate(this.vy * 0.1); // Spin a bit while falling
+    }
+
+    // Draw body
+    if (!this.hiding) {
+      ctx.fillStyle = this.color;
+      ctx.beginPath();
+      // Body stretches out when moving
+      const stretch = this.falling ? 1 : 1.2 + Math.sin(Date.now() / 500 + this.wobblePhase) * 0.2;
+      ctx.ellipse(this.size * 0.2, 0, this.size * stretch * 1.5, this.size * 0.4, 0, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Antennae
+      if (!this.falling) {
+        const headX = this.size * 0.2 + this.size * stretch * 1.5;
+        ctx.strokeStyle = this.color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(headX - this.size * 0.3, -this.size * 0.2);
+        ctx.lineTo(headX + this.size * 0.4, -this.size * 0.6);
+        ctx.moveTo(headX - this.size * 0.3, this.size * 0.2);
+        ctx.lineTo(headX + this.size * 0.4, this.size * 0.6);
+        ctx.stroke();
+      }
+    }
+
+    // Draw shell
+    ctx.fillStyle = this.shellColor;
+    ctx.beginPath();
+    ctx.arc(-this.size * 0.2, 0, this.size * 0.8, 0, Math.PI * 2);
+    ctx.fill();
+    
+    // Shell spiral detail
+    ctx.strokeStyle = '#3e2723';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(-this.size * 0.2, 0, this.size * 0.5, 0, Math.PI * 1.5);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(-this.size * 0.2, 0, this.size * 0.2, 0, Math.PI * 1.5);
+    ctx.stroke();
+
     ctx.restore();
   }
 }

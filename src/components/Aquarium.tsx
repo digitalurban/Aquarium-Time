@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useImperativeHandle, forwardRef } from 'react';
-import { VectorFish, Bubble, Food, Pebble, Rock, Driftwood, Plant, GhostShrimp, SideFilter } from '../lib/entities';
+import { VectorFish, Bubble, Food, Pebble, Rock, Driftwood, Plant, GhostShrimp, SideFilter, Snail } from '../lib/entities';
 
 export interface AquariumRef {
   addFish: (species: 'tetra' | 'clownfish') => void;
@@ -33,6 +33,7 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
     foods: [] as Food[],
     bubbles: [] as Bubble[],
     shrimps: [] as GhostShrimp[],
+    snails: [] as Snail[],
     environment: [] as (Pebble | Rock | Driftwood)[],
     plants: [] as Plant[],
     taps: [] as {x: number, y: number, age: number, maxAge: number}[],
@@ -46,6 +47,10 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
   useImperativeHandle(ref, () => ({
     addFish: (species: 'tetra' | 'clownfish') => {
       simRef.current.fishes.push(new VectorFish(simRef.current.width, simRef.current.height, species));
+      
+      // Save to localStorage
+      const count = simRef.current.fishes.filter(f => f.species === species).length;
+      localStorage.setItem(`aquarium_${species}s`, count.toString());
     },
     removeFish: (species: 'tetra' | 'clownfish') => {
       const fishes = simRef.current.fishes;
@@ -55,6 +60,10 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
           break;
         }
       }
+      
+      // Save to localStorage
+      const count = simRef.current.fishes.filter(f => f.species === species).length;
+      localStorage.setItem(`aquarium_${species}s`, count.toString());
     },
     feed: (x?: number, y?: number) => {
       const sim = simRef.current;
@@ -101,8 +110,8 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
     const resize = () => {
       const parent = canvas.parentElement;
       if (parent) {
-        // Force devicePixelRatio to 1 for maximum performance on all devices, especially Safari
-        const dpr = 1;
+        // Use devicePixelRatio up to 2 for crispness on Retina displays without tanking performance
+        const dpr = Math.min(window.devicePixelRatio || 1, 2);
         
         canvas.width = parent.clientWidth * dpr;
         canvas.height = parent.clientHeight * dpr;
@@ -170,11 +179,19 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
     sim.foods = [];
     sim.bubbles = [];
     sim.shrimps = [];
+    sim.snails = [];
 
-    // Initial population: 28 Tetras, 2 Clownfish, 2 Ghost Shrimps
-    for (let i = 0; i < 28; i++) sim.fishes.push(new VectorFish(sim.width, sim.height, 'tetra'));
-    for (let i = 0; i < 2; i++) sim.fishes.push(new VectorFish(sim.width, sim.height, 'clownfish'));
+    // Load saved fish counts or use defaults
+    const savedTetras = localStorage.getItem('aquarium_tetras');
+    const savedClowns = localStorage.getItem('aquarium_clowns');
+    const numTetras = savedTetras !== null ? parseInt(savedTetras, 10) : 28;
+    const numClowns = savedClowns !== null ? parseInt(savedClowns, 10) : 2;
+
+    // Initial population
+    for (let i = 0; i < numTetras; i++) sim.fishes.push(new VectorFish(sim.width, sim.height, 'tetra'));
+    for (let i = 0; i < numClowns; i++) sim.fishes.push(new VectorFish(sim.width, sim.height, 'clownfish'));
     for (let i = 0; i < 2; i++) sim.shrimps.push(new GhostShrimp(sim.width, sim.height));
+    for (let i = 0; i < 3; i++) sim.snails.push(new Snail(sim.width, sim.height));
 
     let animationId: number;
 
@@ -434,6 +451,12 @@ const Aquarium = forwardRef<AquariumRef, {}>((props, ref) => {
       }
 
       ctx.restore();
+
+      // Draw snails on the glass (front-most layer, independent of cameraX for parallax effect or attached to glass)
+      sim.snails.forEach(s => {
+        s.update(sim.width, sim.height, sim.taps, cameraX);
+        s.draw(ctx);
+      });
 
       animationId = requestAnimationFrame(loop);
     };
