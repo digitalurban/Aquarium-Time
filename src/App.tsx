@@ -6,36 +6,28 @@
 import React, { useRef, useState, useEffect } from 'react';
 import Aquarium, { AquariumRef } from './components/Aquarium';
 
-function useUnderwaterSound(enabled: boolean, customAudioUrl: string | null) {
+function useUnderwaterSound(enabled: boolean) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
-  const intendedSrcRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!audioRef.current) {
-      const audio = new Audio();
+      const audio = new Audio('./water-loop.mp3');
       audio.loop = true;
       audio.volume = 0.6;
       audioRef.current = audio;
       
-      // If brook.mp3 fails to load, fallback to the wikimedia sound
+      // If water-loop.mp3 fails to load, fallback to the wikimedia sound
       audio.addEventListener('error', () => {
-        if (intendedSrcRef.current === '/brook.mp3' && audio.src.endsWith('brook.mp3')) {
+        if (audio.src.includes('water-loop.mp3')) {
           audio.src = "https://upload.wikimedia.org/wikipedia/commons/1/1f/Brook_sound.ogg";
           if (enabled) {
-            const p = audio.play();
-            if (p !== undefined) p.catch(() => {});
+            audio.play().catch(() => {});
           }
         }
       });
     }
 
     const audio = audioRef.current;
-    const targetSrc = customAudioUrl || "/brook.mp3";
-
-    if (intendedSrcRef.current !== targetSrc) {
-      intendedSrcRef.current = targetSrc;
-      audio.src = targetSrc;
-    }
 
     if (enabled) {
       const playPromise = audio.play();
@@ -47,7 +39,7 @@ function useUnderwaterSound(enabled: boolean, customAudioUrl: string | null) {
     } else {
       audio.pause();
     }
-  }, [enabled, customAudioUrl]);
+  }, [enabled]);
 
   // Handle interaction to resume audio if autoplay was blocked
   useEffect(() => {
@@ -64,6 +56,8 @@ function useUnderwaterSound(enabled: boolean, customAudioUrl: string | null) {
     document.addEventListener('pointerdown', handleInteraction);
     return () => document.removeEventListener('pointerdown', handleInteraction);
   }, [enabled]);
+
+  return audioRef;
 }
 
 export default function App() {
@@ -99,38 +93,20 @@ export default function App() {
       return saved !== null ? saved === 'true' : false;
     } catch { return false; }
   });
-  const [customAudioUrl, setCustomAudioUrl] = useState<string | null>(() => {
-    try {
-      return localStorage.getItem('aquarium_custom_audio');
-    } catch { return null; }
-  });
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  
   const touchStartDistRef = useRef<number | null>(null);
 
-  useUnderwaterSound(soundEnabled, customAudioUrl);
+  const audioRef = useUnderwaterSound(soundEnabled);
 
-  const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const url = URL.createObjectURL(file);
-      setCustomAudioUrl(url);
-      setSoundEnabled(true);
-      
-      // We can't easily save the object URL to localStorage as it expires,
-      // but we can read it as a data URL if we want it to persist.
-      // For performance with large audio files, we'll just use the object URL for the session.
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const result = e.target?.result as string;
-        if (result) {
-          try {
-            localStorage.setItem('aquarium_custom_audio', result);
-          } catch (err) {
-            console.warn('Audio file too large to save to localStorage');
-          }
-        }
-      };
-      reader.readAsDataURL(file);
+  const toggleSound = () => {
+    const newState = !soundEnabled;
+    setSoundEnabled(newState);
+    if (audioRef.current) {
+      if (newState) {
+        audioRef.current.play().catch(() => {});
+      } else {
+        audioRef.current.pause();
+      }
     }
   };
 
@@ -203,10 +179,6 @@ export default function App() {
     }
   };
 
-  const handleFeed = () => {
-    aquariumRef.current?.feed();
-  };
-
   const handleAddFish = (species: 'tetra' | 'clownfish') => {
     aquariumRef.current?.addFish(species);
   };
@@ -257,13 +229,6 @@ export default function App() {
             }`}
           >
             <button 
-              onClick={handleFeed}
-              className="bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 border border-slate-600/50 px-4 py-1.5 rounded-full text-sm transition-all active:scale-95"
-            >
-              Feed
-            </button>
-            
-            <button 
               onClick={() => setShowTime(!showTime)}
               className={`border px-4 py-1.5 rounded-full text-sm transition-all active:scale-95 ${
                 showTime 
@@ -275,29 +240,14 @@ export default function App() {
             </button>
 
             <button 
-              onClick={() => setSoundEnabled(!soundEnabled)}
+              onClick={toggleSound}
               className={`border px-4 py-1.5 rounded-full text-sm transition-all active:scale-95 ${
                 soundEnabled 
                   ? 'bg-blue-600/80 hover:bg-blue-500/80 text-white border-blue-500/50' 
                   : 'bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 border-slate-600/50'
               }`}
             >
-              {soundEnabled ? 'Sound: On' : 'Sound: Off'}
-            </button>
-
-            <input 
-              type="file" 
-              accept="audio/*" 
-              ref={fileInputRef} 
-              onChange={handleAudioUpload} 
-              className="hidden" 
-            />
-            <button 
-              onClick={() => fileInputRef.current?.click()}
-              className="bg-slate-800/80 hover:bg-slate-700/80 text-slate-200 border border-slate-600/50 px-4 py-1.5 rounded-full text-sm transition-all active:scale-95"
-              title="Upload custom background sound"
-            >
-              Upload Sound
+              {soundEnabled ? 'Mute Sound' : 'Play Sound'}
             </button>
 
             <button 
